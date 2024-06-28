@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <script
+            src="https://kit.fontawesome.com/8adfb2aa9f.js"
+            crossorigin="anonymous"
+        ></script>
+        <link
+            rel="stylesheet"
+            type="text/css"
+            href="{{ url_for('static',filename='styles/presensi.css') }}"
+        />
+        <title>VeriFace</title>
+        <script
+            src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"
+            integrity="sha512-q/dWJ3kcmjBLU4Qc47E4A9kTB4m3wuTY7vkFJDTZKjTs8jhyGQnaUrxa0Ytd0ssMZhbNua9hE+E7Qv1j+DyZwA=="
+            crossorigin="anonymous"
+        ></script>
+    </head>
+    <body>
+        <nav><h1>VeriFace</h1></nav>
+        <main id="main">
+            <section class="left-side">
+                <video id="player" autoplay style="display: none"></video>
+                {% if mode == "tambah" %}
+                <img id="camera" src="/video_feed/tambah" alt="" />
+                {% elif mode == "cek" %}
+                <img id="camera" src="/video_feed/cek" alt="" />
+                {% endif %}
+                <select id="cameraSelect" class="select-camera"></select>
+
+                {% if mode == "cek" %}
+                <div class="keterangan">
+                    <a href="/event/{{event_id}}/presensi"
+                        ><button class="keluarBTN">Selesai</button></a
+                    >
+                </div>
+                {% endif %}
+            </section>
+            <section class="right-side">
+                {% if mode == "tambah" %}
+                <p id="sudah"></p>
+                <button
+                    id="selesaiBTN" class="keluarBTN"
+                    style="display: none"
+                    onclick="window.location.href = '/event/{{event_id}}/presensi'"
+                >
+                    Selesai
+                </button>
+                {% elif mode == "cek" %}
+                <h3>Daftar hadir</h3>
+                <ul class="attendance-list"></ul>
+                {% endif %}
+            </section>
+        </main>
+
+        <script>
+            const socket = io();
+            let currentStream;
+
+            document.addEventListener("DOMContentLoaded", function () {
+                const videoElement = document.getElementById("player");
+                const cameraSelect = document.getElementById("cameraSelect");
+                let attendanceList = document.querySelector(".attendance-list");
+                const selesaiBTN = document.getElementById("selesaiBTN");
+
+                socket.on("connect", () => {
+                    console.log("terhubung");
+                });
+
+                socket.on("update_attendance", (list_hadir) => {
+                    attendanceList.innerHTML = ""; // Clear the existing list
+                    list_hadir.forEach((id) => {
+                        let listItem = document.createElement("li");
+                        listItem.textContent = id;
+                        attendanceList.appendChild(listItem);
+                    });
+                });
+
+                socket.on("selesai", function () {
+                    selesaiBTN.style.display = "block";
+                    document.getElementById("sudah").innerHTML = "Sudah";
+                });
+                socket.on("wajahTerdaftar", function () {
+                    selesaiBTN.style.display = "block";
+                    document.getElementById("sudah").innerHTML =
+                        "Wajah telah terdaftar pada peserta lain";
+                });
+
+                function gotDevices(mediaDevices) {
+                    cameraSelect.innerHTML = "";
+                    let count = 1;
+                    mediaDevices.forEach((mediaDevice) => {
+                        if (mediaDevice.kind === "videoinput") {
+                            const option = document.createElement("option");
+                            option.value = mediaDevice.deviceId;
+                            const label =
+                                mediaDevice.label || `Camera ${count++}`;
+                            const textNode = document.createTextNode(label);
+                            option.appendChild(textNode);
+                            cameraSelect.appendChild(option);
+                        }
+                    });
+
+                    const savedCameraId =
+                        localStorage.getItem("selectedCameraId");
+                    if (savedCameraId) {
+                        cameraSelect.value = savedCameraId;
+                        startCamera(savedCameraId);
+                    } else {
+                        if (cameraSelect.options.length > 1) {
+                            cameraSelect.selectedIndex = 1;
+                            startCamera(cameraSelect.value);
+                        }
+                    }
+                }
+
+                function stopStreamedVideo() {
+                    if (currentStream) {
+                        currentStream
+                            .getTracks()
+                            .forEach((track) => track.stop());
+                    }
+                }
+
+                function startCamera(deviceId) {
+                    if (
+                        navigator.mediaDevices &&
+                        navigator.mediaDevices.getUserMedia
+                    ) {
+                        stopStreamedVideo();
+                        navigator.mediaDevices
+                            .getUserMedia({
+                                video: { deviceId: { exact: deviceId } },
+                            })
+                            .then((stream) => {
+                                currentStream = stream;
+                                videoElement.srcObject = stream;
+                                sendToServer(stream);
+                            })
+                            .catch((error) => {
+                                console.error(
+                                    "Error accessing camera: ",
+                                    error
+                                );
+                            });
+                    } else {
+                        alert(
+                            "Your browser does not support accessing the camera."
+                        );
+                    }
+                }
+
+                function sendToServer(stream) {
+                    const canvas = document.createElement("canvas");
+                    const context = canvas.getContext("2d");
+                    const videoPlayer = document.querySelector("#player");
+
+                    videoPlayer.addEventListener("play", function () {
+                        canvas.width = videoPlayer.videoWidth;
+                        canvas.height = videoPlayer.videoHeight;
+
+                        setInterval(function () {
+                            context.drawImage(
+                                videoPlayer,
+                                0,
+                                0,
+                                canvas.width,
+                                canvas.height
+                            );
+                            const frame = canvas.toDataURL("image/jpeg");
+                            socket.emit("frame", frame);
+                        }, 100); // Sending frames at an interval
+                    });
+                }
+
+                cameraSelect.addEventListener("change", function () {
+                    localStorage.setItem("selectedCameraId", this.value);
+                    location.reload();
+                });
+
+                navigator.mediaDevices.enumerateDevices().then(gotDevices);
+
+                if (!localStorage.getItem("refreshedOnce")) {
+                    mintaRefreshSekali();
+                }
+            });
+
+            function mintaRefreshSekali() {
+                var confirmation = confirm(
+                    "Anda akan diminta untuk me-refresh sekali. Lanjutkan?"
+                );
+                if (confirmation === true) {
+                    localStorage.setItem("refreshedOnce", "true");
+                    location.reload();
+                }
+            }
+        </script>
+    </body>
+</html>
